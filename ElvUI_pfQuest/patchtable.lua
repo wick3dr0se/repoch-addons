@@ -1,42 +1,12 @@
-local loc = GetLocale()
-local dbs = { "items", "quests", "quests-itemreq", "objects", "units", "zones", "professions", "areatrigger", "refloot" }
-local noloc = { "items", "quests", "objects", "units" }
-
 local function modulo(val, by)
   return val - floor(val / by) * by
 end
 
--- Patch databases to merge ProjectEpoch data
-local function patchtable(base, diff)
-  for k, v in pairs(diff) do
-    if type(v) == "string" and v == "_" then
-      base[k] = nil
-    else
-      base[k] = v
-    end
-  end
-end
+-- The "*-epoch" overlay tables used to be merged into their base here, on every
+-- login: patch each base row, and drop the ones whose overlay value was "_".
+-- That merge now happens at build time (tools/pack_db.lua), so the shipped
+-- database is already merged and there is no "*-epoch" subtable to find.
 
-local loc_core, loc_update
-for _, db in pairs(dbs) do
-  if pfDB[db]["data-epoch"] then
-    patchtable(pfDB[db]["data"], pfDB[db]["data-epoch"])
-  end
-
-  for loc, _ in pairs(pfDB.locales) do
-    if pfDB[db][loc] and pfDB[db][loc.."-epoch"] then
-      loc_update = pfDB[db][loc.."-epoch"] or pfDB[db]["enUS-epoch"]
-      patchtable(pfDB[db][loc], loc_update)
-    end
-  end
-end
-
-loc_core = pfDB["professions"][loc] or pfDB["professions"]["enUS"]
-loc_update = pfDB["professions"][loc.."-epoch"] or pfDB["professions"]["enUS-epoch"]
-if loc_update then patchtable(loc_core, loc_update) end
-
-if pfDB["minimap-epoch"] then patchtable(pfDB["minimap"], pfDB["minimap-epoch"]) end
-if pfDB["meta-epoch"] then patchtable(pfDB["meta"], pfDB["meta-epoch"]) end
 
 -- Update bitmasks to include custom races if needed
 -- if pfDB.bitraces then

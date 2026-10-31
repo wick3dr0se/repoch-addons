@@ -70,20 +70,22 @@ check("but builds no subtable yet", pfDB.IsLoaded("items", "enUS") == false)
 local names = items["enUS"]
 check("asking for one subtable builds it", type(names) == "table")
 check("only that subtable is built", pfDB.IsLoaded("items", "enUS") == true and pfDB.IsLoaded("items", "data") == false)
-
-local firstId
-for id in next, names do firstId = id break end
-check("the subtable has rows", firstId ~= nil)
-
-local before = env.pfDB_PACKED["items"].subs["enUS"].blob
-check("the blob was released when the table was built", before == nil)
-
-check("the same table comes back on a second ask", items["enUS"] == names)
-check("pairs sees the whole subtable", (function()
+-- names ship whole: they are the tables every list in the addon iterates
+local built = pfDB.LoadSub("items", "enUS")
+check("the name table is available without LoadSub", type(built) == "table")
+check("LoadSub returns the subtable", type(built) == "table")
+check("LoadSub builds every name shard", (function()
 	local n = 0
-	for _ in next, names do n = n + 1 end
+	for _ in next, built do n = n + 1 end
 	return n > 1000
 end)())
+check("pairs sees the whole subtable after LoadSub", (function()
+	local n = 0
+	for _ in next, built do n = n + 1 end
+	return n > 1000
+end)())
+
+check("the same table comes back on a second ask", items["enUS"] == built)
 
 ---------------------------------------------------------------------------
 -- Load / Status
@@ -98,13 +100,18 @@ pfDB.Load("items")
 check("Load(kind) builds every subtable of that kind",
 	pfDB.IsLoaded("items", "data") == true)
 
-local names2 = pfDB.Load("zones")
-check("Load returns the kind table", type(names2) == "table")
+local zones = pfDB.Load("zones")
+check("Load returns the kind table", type(zones) == "table")
 check("Load(kind) marks every subtable built", (function()
 	local entry = env.pfDB_PACKED["zones"]
 	if not entry then return true end
 	for _, sub in next, entry.subs do
 		if sub.blob then return false end
+		if sub.blobs then
+			for _, blob in next, sub.blobs do
+				if type(blob) == "string" then return false end
+			end
+		end
 	end
 	return true
 end)())
@@ -118,6 +125,49 @@ check("a warm-up frame exists with an OnUpdate", warmFrame ~= nil and type(warmF
 local pendingBefore = pfDB.IsLoaded("refloot")
 for _ = 1, 5 do warmFrame.scripts.OnUpdate(warmFrame, 0.1) end
 check("nothing happens before the warm-up delay", pfDB.IsLoaded("refloot") == pendingBefore)
+
+---------------------------------------------------------------------------
+-- sharded row tables
+---------------------------------------------------------------------------
+
+print("== shards ==")
+
+-- an id to look for, from the eager name table
+package.loaded["units.enUS"] = true
+local wanted
+for id in next, pfDB["units"]["enUS"] do
+	if type(id) == "number" then wanted = id break end
+end
+check("there is an id to look for", wanted ~= nil)
+
+local shardEntry = env.pfDB_PACKED["units"].subs["data"]
+check("units.data is sharded", type(shardEntry.shards) == "number" and shardEntry.shards > 1)
+
+local function packedShards()
+	local n = 0
+	for _, blob in next, shardEntry.blobs do
+		if type(blob) == "string" then n = n + 1 end
+	end
+	return n
+end
+
+local before = packedShards()
+check("every shard starts packed", before == shardEntry.shards, before)
+
+local t0 = os.clock()
+local row = pfDB["units"]["data"][wanted]
+local elapsed = (os.clock() - t0) * 1000
+
+check("a lookup finds its row", row ~= nil)
+check("a lookup builds exactly one shard", packedShards() == before - 1, packedShards())
+print(string.format("       one shard built in %.1f ms", elapsed))
+
+-- the rest stay packed until something asks for everything
+pfDB.Load("units")
+check("Load builds the remaining shards", packedShards() == 0, packedShards())
+
+pfDB.Load("units")
+check("Load builds the remaining shards", packedShards() == 0, packedShards())
 
 print(string.format("\n%d checks, %d failures", checks, failures))
 os.exit(failures == 0 and 0 or 1)

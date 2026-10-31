@@ -34,29 +34,79 @@ local function decodeInstall(rows)
 	end
 end
 
-local function materialiseSub(kind, sub)
-	local entry = pfDB_PACKED[kind]
-	local subEntry = entry and entry.subs and entry.subs[sub]
-	if type(subEntry) ~= "table" or type(subEntry.blob) ~= "string" then
-		return nil
-	end
-
-	local chunk = loadstring(subEntry.blob, "pfDB:" .. kind .. "." .. tostring(sub))
+local function loadBlob(blob, kind, sub, packed, label)
+	local chunk = loadstring(blob, "pfDB:" .. kind .. "." .. tostring(sub) .. (label or ""))
 	if not chunk then
 		if DEFAULT_CHAT_FRAME then
 			DEFAULT_CHAT_FRAME:AddMessage(string.format(
 				"|cff33ffccpfQuest|r: database %s.%s failed to load.", kind, tostring(sub)))
 		end
-		pfDB_PACKED[kind].subs[sub] = nil
 		return nil
 	end
 
 	local value = chunk()
-	if subEntry.packed then
+	if packed then
 		decodeInstall(value)
 	end
-	subEntry.blob = nil -- the table is the data now; release the string
+	return value
+end
 
+-- A sharded subtable (units.data, quests.data, ...) builds one slice per lookup.
+-- Nobody iterates these whole: the only pairs() over row data in the addon is on
+-- a single row. Anything that does want them whole calls pfDB.Load(kind), which
+-- builds every shard.
+local function shardProxy(kind, sub, subEntry)
+	local proxy = {}
+
+	setmetatable(proxy, {
+		__index = function(self, key)
+			if type(key) ~= "number" then return nil end
+
+			local index = (math.floor(key) % subEntry.shards) + 1
+			local blob = subEntry.blobs[index]
+			if type(blob) ~= "string" then
+				return rawget(self, key)
+			end
+
+			local rows = loadBlob(blob, kind, sub, subEntry.packed, "#" .. index)
+			subEntry.blobs[index] = nil -- the rows are here now
+			if rows then
+				for k, v in next, rows do rawset(self, k, v) end
+			end
+
+			return rawget(self, key)
+		end,
+	})
+
+	return proxy
+end
+
+local function materialiseSub(kind, sub)
+	-- "loc" is database.lua's alias for the Locale subtable, which ships as enUS
+	if sub == "loc" then sub = "enUS" end
+
+	local entry = pfDB_PACKED[kind]
+	local subEntry = entry and entry.subs and entry.subs[sub]
+	if type(subEntry) ~= "table" then
+		return nil
+	end
+
+	if subEntry.shards then
+		local value = shardProxy(kind, sub, subEntry)
+		return value
+	end
+
+	if type(subEntry.blob) ~= "string" then
+		return nil
+	end
+
+	local value = loadBlob(subEntry.blob, kind, sub, subEntry.packed)
+	if value == nil then
+		pfDB_PACKED[kind].subs[sub] = nil
+		return nil
+	end
+
+	subEntry.blob = nil -- the table is the data now; release the string
 	return value
 end
 
@@ -96,8 +146,23 @@ function pfDB.Load(kind)
 		local proxy = materialiseKind(kind)
 		local entry = pfDB_PACKED[kind]
 		if proxy and entry and entry.subs then
-			for sub in next, entry.subs do
-				rawset(proxy, sub, materialiseSub(kind, sub))
+			for sub, subEntry in next, entry.subs do
+				local value = rawget(proxy, sub) or materialiseSub(kind, sub)
+				rawset(proxy, sub, value)
+
+				-- sharded subtables: build whatever slices are still packed
+				if subEntry.shards and subEntry.blobs then
+					for index = 1, subEntry.shards do
+						local blob = subEntry.blobs[index]
+						if type(blob) == "string" then
+							local rows = loadBlob(blob, kind, sub, subEntry.packed, "#" .. index)
+							subEntry.blobs[index] = nil
+							if rows then
+								for k, v in next, rows do rawset(value, k, v) end
+							end
+						end
+					end
+				end
 			end
 		end
 		return proxy
@@ -122,7 +187,13 @@ function pfDB.Status()
 			local pending, total = 0, 0
 			for _, subEntry in next, entry.subs do
 				total = total + 1
-				if type(subEntry.blob) == "string" then pending = pending + 1 end
+				local stillPacked = type(subEntry.blob) == "string"
+				if not stillPacked and subEntry.blobs then
+					for _, blob in next, subEntry.blobs do
+						if type(blob) == "string" then stillPacked = true break end
+					end
+				end
+				if stillPacked then pending = pending + 1 end
 			end
 			if pending > 0 then
 				parts[#parts + 1] = string.format("%s %d/%d", kind, total - pending, total)
@@ -131,6 +202,35 @@ function pfDB.Status()
 	end
 	table.sort(parts)
 	return #parts > 0 and table.concat(parts, ", ") or "everything built"
+end
+
+-- build every shard of one subtable, for the paths that iterate it (search, the
+-- browser list). Cheaper than pfDB.Load(kind), which also builds the row tables.
+function pfDB.LoadSub(kind, sub)
+	-- "loc" is database.lua's alias for the locale subtable, which ships as enUS
+	if sub == "loc" then sub = "enUS" end
+
+	local entry = pfDB_PACKED[kind]
+	local subEntry = entry and entry.subs and entry.subs[sub]
+
+	local kindTable = rawget(pfDB, kind) or materialiseKind(kind)
+	local value = kindTable and (rawget(kindTable, sub) or materialiseSub(kind, sub))
+	if value and kindTable then rawset(kindTable, sub, value) end
+
+	if value and subEntry and subEntry.shards and subEntry.blobs then
+		for index = 1, subEntry.shards do
+			local blob = subEntry.blobs[index]
+			if type(blob) == "string" then
+				local rows = loadBlob(blob, kind, sub, subEntry.packed, "#" .. index)
+				subEntry.blobs[index] = nil
+				if rows then
+					for k, v in next, rows do rawset(value, k, v) end
+				end
+			end
+		end
+	end
+
+	return value
 end
 
 function pfDB.IsLoaded(kind, sub)

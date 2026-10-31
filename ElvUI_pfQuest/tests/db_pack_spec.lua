@@ -70,6 +70,44 @@ do
 			chunk()
 		end
 	end
+	-- the packer merges the "*-epoch" overlays at build time, using the rule that
+	-- used to live in patchtable.lua: replace by key, and a "_" value deletes.
+	-- The reference has to apply the same rule or the comparison is apples to
+	-- oranges; db_provenance_spec keeps the inputs honest.
+	local function patch(base, diff)
+		for k, v in next, diff do
+			if type(v) == "string" and v == "_" then
+				base[k] = nil
+			else
+				base[k] = v
+			end
+		end
+	end
+
+	for _, name in ipairs({ "items", "quests", "quests-itemreq", "objects", "units",
+		"zones", "professions", "areatrigger", "refloot" }) do
+		local kind = env.pfDB[name]
+		if type(kind) == "table" then
+			if kind["data-epoch"] then
+				patch(kind["data"] or {}, kind["data-epoch"])
+				kind["data-epoch"] = nil
+			end
+			for _, locale in ipairs({ "enUS", "loc" }) do
+				local epoch = kind[locale .. "-epoch"]
+				if epoch then
+					patch(kind[locale] or {}, epoch)
+					kind[locale .. "-epoch"] = nil
+				end
+			end
+		end
+	end
+
+	for _, name in ipairs({ "minimap", "meta" }) do
+		local epoch = env.pfDB[name .. "-epoch"]
+		if epoch and env.pfDB[name] then patch(env.pfDB[name], epoch) end
+		env.pfDB[name .. "-epoch"] = nil
+	end
+
 	source = env.pfDB
 end
 
@@ -206,6 +244,20 @@ for kind in next, pfDB do
 	end
 end
 check("no __ fields left behind after a full walk", leftover == 0, leftover)
+
+-- the merge is baked in: an "-epoch" subtable in the pack means the build step
+-- regressed and the client is merging again at login
+local epochSubs = 0
+for kind in next, pfDB do
+	if type(kind) == "string" and type(pfDB[kind]) == "table" then
+		for sub in next, pfDB[kind] do
+			if type(sub) == "string" and sub:match("%-epoch$") then
+				epochSubs = epochSubs + 1
+			end
+		end
+	end
+end
+check("no -epoch subtables shipped (merged at build time)", epochSubs == 0, epochSubs)
 
 print("")
 print(string.format("building everything on demand: %.1f ms, moved off the login path", totalBuild))

@@ -158,9 +158,9 @@ end
 -- detect localized databases
 pfDatabase.dbstring = ""
 for id, db in pairs(dbs) do
-  -- assign existing locale
-  pfDB[db]["loc"] = pfDB[db][loc] or pfDB[db]["enUS"] or {}
-  pfDatabase.dbstring = pfDatabase.dbstring .. " |cffcccccc[|cffffffff" .. db .. "|cffcccccc:|cff33ffcc" .. ( pfDB[db][loc] and loc or "enUS" ) .. "|cffcccccc]"
+  -- pfDB[db]["loc"] resolves through the packed loader, which maps it to the
+  -- locale subtable. Reading it here used to build every name table at login.
+  pfDatabase.dbstring = pfDatabase.dbstring .. " |cffcccccc[|cffffffff" .. db .. "|cffcccccc:|cff33ffcc" .. loc .. "|cffcccccc]"
 end
 
 -- track all previous meta selections on login
@@ -599,6 +599,9 @@ end
 -- Scans localization tables for matching IDs
 -- Returns table with all IDs
 function pfDatabase:GetIDByName(name, db, partial, server)
+  -- names ship sharded: this iterates them, so build every shard first
+  if pfDB.LoadSub then pfDB.LoadSub(db, "enUS") end
+
   if not pfDB[db] then return nil end
   local ret = {}
 

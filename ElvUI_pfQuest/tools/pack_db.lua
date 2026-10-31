@@ -223,6 +223,71 @@ for _, path in ipairs(FILES) do
 	end
 end
 
+
+---------------------------------------------------------------------------
+-- bake in the epoch merge
+---------------------------------------------------------------------------
+
+-- patchtable.lua used to do this at every login: it merged every "*-epoch"
+-- subtable into its base and dropped keys whose overlay value was the string "_".
+-- Doing it here means the client materialises one table instead of two and runs
+-- no merge pass. The rule is copied from that file, which is why it looks odd.
+local function patch(base, diff)
+	for k, v in next, diff do
+		if type(v) == "string" and v == "_" then
+			base[k] = nil
+		else
+			base[k] = v
+		end
+	end
+end
+
+-- Big row tables are sharded by id: a lookup builds one slice instead of the
+-- whole table. Shard count is chosen so a slice stays around 1000-1500 rows,
+-- which is a few milliseconds to build. Nobody iterates these tables whole (the
+-- only pairs() over row data is on a single row), and pfDB.Load(kind) builds
+-- every shard for anything that does want them all.
+-- Row tables only. Name tables stay whole on purpose: search, the browser list,
+-- the tooltip, nameplates, the map and the quest log all iterate them with pairs(),
+-- and a sharded proxy would make every one of those silently see part of a table.
+-- That is the failure mode a lazy table must never have.
+local SHARDED = {
+	items   = { data = 32 },
+	units   = { data = 24 },
+	objects = { data = 16 },
+	quests  = { data = 8 },
+}
+
+local MERGED_KINDS = { "items", "quests", "quests-itemreq", "objects", "units",
+	"zones", "professions", "areatrigger", "refloot" }
+local MERGED_LOCALES = { "enUS", "loc" }
+
+for _, name in ipairs(MERGED_KINDS) do
+	local kind = pfDB[name]
+	if type(kind) == "table" then
+		if kind["data-epoch"] then
+			patch(kind["data"] or {}, kind["data-epoch"])
+			kind["data-epoch"] = nil
+		end
+		for _, locale in ipairs(MERGED_LOCALES) do
+			local epoch = kind[locale .. "-epoch"]
+			if epoch then
+				patch(kind[locale] or {}, epoch)
+				kind[locale .. "-epoch"] = nil
+			end
+		end
+	end
+end
+
+-- these two merge at the level of the table itself, not per row
+for _, name in ipairs({ "minimap", "meta" }) do
+	local epoch = pfDB[name .. "-epoch"]
+	if epoch and pfDB[name] then
+		patch(pfDB[name], epoch)
+	end
+	pfDB[name .. "-epoch"] = nil
+end
+
 os.execute("mkdir -p db/packed")
 
 local kinds = {}
@@ -245,16 +310,17 @@ for _, kind in ipairs(kinds) do
 	for _, subKeyRaw in ipairs(subKeys) do
 		local subName = tostring(subKeyRaw)
 		local sub = pfDB[kind][subKeyRaw]
-		local packedCount, rowCount = 0, 0
-		local out, packedAny = {}, false
+		local rowCount = 0
+		local rowKeys, rowStrings = {}, {}
+		local packedAny = false
 
 		if type(sub) == "table" then
-			local keys = {}
-			for k in next, sub do keys[#keys + 1] = k end
-			table.sort(keys, keyless)
+			for k in next, sub do rowKeys[#rowKeys + 1] = k end
+			table.sort(rowKeys, keyless)
+			rowCount = #rowKeys
 
-			rowCount = #keys
-			for _, k in ipairs(keys) do
+			for i = 1, #rowKeys do
+				local k = rowKeys[i]
 				local row = sub[k]
 				if type(row) == "table" then
 					local copy, any = {}, false
@@ -262,31 +328,57 @@ for _, kind in ipairs(kinds) do
 						if type(value) == "table" then
 							copy["__" .. tostring(field)] = encode(value)
 							any = true
-							packedCount = packedCount + 1
 						else
 							copy[field] = value
 						end
 					end
 					if any then packedAny = true end
-					out[#out + 1] = toKey(k) .. "=" .. serialize(copy)
+					rowStrings[i] = toKey(k) .. "=" .. serialize(copy)
 				else
-					out[#out + 1] = toKey(k) .. "=" .. toValue(row)
+					rowStrings[i] = toKey(k) .. "=" .. toValue(row)
 				end
 			end
 		end
 
-		local blob = "return {" .. table.concat(out, ",") .. "}"
-		assert(loadstring(blob, "pack"), "blob for " .. kind .. "." .. subName .. " does not compile")
 		local subKey = type(subKeyRaw) == "number"
 			and ("[" .. subName .. "]") or ('["' .. subName .. '"]')
-		subs[#subs + 1] = string.format(
-			'			%s = { rows = %d, packed = %s, blob = %s },',
-			subKey, rowCount, tostring(packedAny), longBracket(blob))
+		local shardCount = SHARDED[kind] and SHARDED[kind][subName]
+
+		if shardCount and rowCount > shardCount then
+			local buckets = {}
+			for i = 1, shardCount do buckets[i] = {} end
+			for i = 1, #rowKeys do
+				local k = rowKeys[i]
+				local bucket = ((type(k) == "number" and math.floor(k) or i) % shardCount) + 1
+				buckets[bucket][#buckets[bucket] + 1] = rowStrings[i]
+			end
+
+			local blobs, bytes = {}, 0
+			for i = 1, shardCount do
+				local body = "return {" .. table.concat(buckets[i], ",") .. "}"
+				assert(loadstring(body, "pack"), "shard " .. i .. " of " .. kind .. "." .. subName .. " does not compile")
+				bytes = bytes + #body
+				blobs[i] = string.format("[%d] = %s", i, longBracket(body))
+			end
+
+			subs[#subs + 1] = string.format(
+				'\t\t\t%s = { rows = %d, packed = %s, shards = %d, blobs = { %s } },',
+				subKey, rowCount, tostring(packedAny), shardCount, table.concat(blobs, ", "))
+			bytesOut = bytesOut + bytes
+		else
+			local blob = "return {" .. table.concat(rowStrings, ",") .. "}"
+			assert(loadstring(blob, "pack"), "blob for " .. kind .. "." .. subName .. " does not compile")
+			subs[#subs + 1] = string.format(
+				'\t\t\t%s = { rows = %d, packed = %s, blob = %s },',
+				subKey, rowCount, tostring(packedAny), longBracket(blob))
+			bytesOut = bytesOut + #blob
+		end
+
 		subRows[#subRows + 1] = string.format('%s = %d', subKey, rowCount)
 		rowsOut = rowsOut + rowCount
-		bytesOut = bytesOut + #blob
 		if packedAny then packedFields = packedFields + 1 end
 	end
+
 
 	local out = table.concat({
 		"--[[",
