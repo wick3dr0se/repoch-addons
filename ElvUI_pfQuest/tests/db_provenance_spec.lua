@@ -114,7 +114,10 @@ if type(lock) == "table" and lock.files then
 	check("shagu's TBC variants are not shipped", #tbc == 0, table.concat(tbc, ", "))
 
 	-- our own corrections are allowed, but they must be explicit
-	local localFiles = walk(addonRoot .. "/data/local")
+	local localFiles = {}
+	for _, path in ipairs(walk(addonRoot .. "/data/local")) do
+		if path:match("%.lua$") then localFiles[#localFiles + 1] = path end
+	end
 	if #localFiles > 0 then
 		print("  note: " .. #localFiles .. " local overlay file(s) present, applied after upstream")
 	else

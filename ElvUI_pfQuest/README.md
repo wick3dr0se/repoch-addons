@@ -35,7 +35,7 @@ Only enUS database files are vendored (other locale directories are removed to k
 
 ## Database
 
-The data is not ours to maintain. Base quests, NPCs, objects and items come from shagu's pfQuest verbatim; the Epoch overlay comes from pfQuest-epoch verbatim. Both are pinned in `data/upstream.lock` with a checksum per file, and `tests/db_provenance_spec.lua` fails if a vendored file is hand edited. Real corrections belong in `data/local/`, applied after upstream, so a refresh cannot silently undo them.
+The data is not ours to maintain. Base quests, NPCs, objects and items come from shagu's pfQuest verbatim; the Epoch overlay comes from pfQuest-epoch verbatim. Both are pinned in `data/upstream.lock` with a checksum per file, and `tests/db_provenance_spec.lua` fails if a vendored file is hand edited. Real corrections belong in [`data/local/`](data/local/README.md), applied after upstream, so a refresh cannot silently undo them. There the merge is by field, so a correction names only the fields that differ, and `"_"` deletes a field or a row. An epoch row replaces the row it targets, which is why their files restate every field.
 
 At runtime the database ships packed. `db/packed/` holds one blob per table: `tools/pack_db.lua` builds the merged tables, packs nested values (spawn coordinates, drop tables, quest relations) into compact strings, and writes them as string constants. The client lexes those instead of compiling the sources, then builds a table the first time something reads it, and releases the blob. Login no longer pays for data a session never touches.
 

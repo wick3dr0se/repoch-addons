@@ -39,6 +39,15 @@ Wow/
 
 `ElvUI` replaces the stock ElvUI install. `ElvUI_OptionsUI` ships beside it in this repo, so copy both folders: the in-game config panel loads from it.
 
+### One addon, no clone
+
+```bash
+cd "Wow/Interface/AddOns"
+curl -sSL https://github.com/wick3dr0se/repoch-addons/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 "repoch-addons-main/ElvUI_SealTwist"
+```
+
+Swap `ElvUI_SealTwist` for any addon folder above and it lands as `Interface/AddOns/ElvUI_SealTwist/`. Installing `ElvUI` this way needs `ElvUI_OptionsUI` fetched too, since the config panel lives in that folder.
+
 ## Licences
 
 Each addon keeps its upstream licence.

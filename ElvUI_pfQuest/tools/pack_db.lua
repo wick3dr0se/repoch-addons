@@ -225,17 +225,67 @@ end
 
 
 ---------------------------------------------------------------------------
--- bake in the epoch merge
+-- our own corrections, applied after upstream
+---------------------------------------------------------------------------
+
+-- data/local/<kind>.lua is where a genuine correction goes, so refreshing the
+-- vendored tables cannot undo it. Same shape as an epoch file: "data-local" for
+-- a row table, "<locale>-local" per locale, or "minimap-local"/"meta-local" for
+-- the two whole-table kinds. It is ours, so it is not pinned by checksum and not
+-- listed in FILES. Files are found by kind and sorted, so a build is repeatable.
+local localFiles = {}
+do
+	local kinds = {}
+	for kind in next, pfDB do
+		if type(kind) == "string" then kinds[#kinds + 1] = kind end
+	end
+	table.sort(kinds)
+	for _, kind in ipairs(kinds) do
+		local path = "data/local/" .. kind .. ".lua"
+		if io.open(path, "rb") then
+			assert(loadfile(path), "cannot compile " .. path)()
+			localFiles[#localFiles + 1] = path
+		end
+	end
+end
+
+---------------------------------------------------------------------------
+-- bake in the merge
 ---------------------------------------------------------------------------
 
 -- patchtable.lua used to do this at every login: it merged every "*-epoch"
 -- subtable into its base and dropped keys whose overlay value was the string "_".
 -- Doing it here means the client materialises one table instead of two and runs
 -- no merge pass. The rule is copied from that file, which is why it looks odd.
+-- An epoch row REPLACES the base row: their files ship whole rows, so anything
+-- else would change data they authored.
 local function patch(base, diff)
 	for k, v in next, diff do
 		if type(v) == "string" and v == "_" then
 			base[k] = nil
+		else
+			base[k] = v
+		end
+	end
+end
+
+-- Our own overlay merges by FIELD instead, because a correction is usually one
+-- field ("this quest is level 60, not 1"). Replacing the row would silently drop
+-- every field the correction did not restate, and a refresh upstream that adds a
+-- field would then be lost without a word. A "_" deletes the field, and a "_"
+-- where the base holds a row deletes the row.
+local function patchLocal(base, diff)
+	for k, v in next, diff do
+		if type(v) == "string" and v == "_" then
+			base[k] = nil
+		elseif type(v) == "table" and type(base[k]) == "table" then
+			for field, value in next, v do
+				if type(value) == "string" and value == "_" then
+					base[k][field] = nil
+				else
+					base[k][field] = value
+				end
+			end
 		else
 			base[k] = v
 		end
@@ -261,19 +311,25 @@ local SHARDED = {
 local MERGED_KINDS = { "items", "quests", "quests-itemreq", "objects", "units",
 	"zones", "professions", "areatrigger", "refloot" }
 local MERGED_LOCALES = { "enUS", "loc" }
+-- order matters: ours is applied last, so a local correction always wins
+local OVERLAYS = { "epoch", "local" }
 
 for _, name in ipairs(MERGED_KINDS) do
 	local kind = pfDB[name]
 	if type(kind) == "table" then
-		if kind["data-epoch"] then
-			patch(kind["data"] or {}, kind["data-epoch"])
-			kind["data-epoch"] = nil
-		end
-		for _, locale in ipairs(MERGED_LOCALES) do
-			local epoch = kind[locale .. "-epoch"]
-			if epoch then
-				patch(kind[locale] or {}, epoch)
-				kind[locale .. "-epoch"] = nil
+		for _, overlay in ipairs(OVERLAYS) do
+			local apply = overlay == "local" and patchLocal or patch
+			local diff = kind["data-" .. overlay]
+			if diff then
+				apply(kind["data"] or {}, diff)
+				kind["data-" .. overlay] = nil
+			end
+			for _, locale in ipairs(MERGED_LOCALES) do
+				local localeDiff = kind[locale .. "-" .. overlay]
+				if localeDiff then
+					apply(kind[locale] or {}, localeDiff)
+					kind[locale .. "-" .. overlay] = nil
+				end
 			end
 		end
 	end
@@ -281,11 +337,19 @@ end
 
 -- these two merge at the level of the table itself, not per row
 for _, name in ipairs({ "minimap", "meta" }) do
-	local epoch = pfDB[name .. "-epoch"]
-	if epoch and pfDB[name] then
-		patch(pfDB[name], epoch)
+	for _, overlay in ipairs(OVERLAYS) do
+		local diff = pfDB[name .. "-" .. overlay]
+		if diff and pfDB[name] then
+			local apply = overlay == "local" and patchLocal or patch
+			apply(pfDB[name], diff)
+		end
+		pfDB[name .. "-" .. overlay] = nil
 	end
-	pfDB[name .. "-epoch"] = nil
+end
+
+if #localFiles > 0 then
+	print(string.format("%d local overlay file(s) applied after upstream: %s",
+		#localFiles, table.concat(localFiles, ", ")))
 end
 
 os.execute("mkdir -p db/packed")
