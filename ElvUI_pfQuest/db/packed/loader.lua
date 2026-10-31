@@ -123,6 +123,15 @@ local function materialiseKind(kind)
 			local value = materialiseSub(kind, sub)
 			if value ~= nil then
 				rawset(self, sub, value)
+
+				-- "loc" and "enUS" are the same table. Whichever one is asked for
+				-- first, both keys get set, so database.lua's alias can never be
+				-- nil just because something read the other name first.
+				if sub == "enUS" then
+					rawset(self, "loc", value)
+				elseif sub == "loc" then
+					rawset(self, "enUS", value)
+				end
 			end
 			return value
 		end,

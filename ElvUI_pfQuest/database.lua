@@ -301,7 +301,7 @@ CreateFrame("Frame", "pfQuestLocaleCheck", UIParent):SetScript("OnUpdate", funct
 end)
 
 -- sanity check the databases
-if isempty(pfDB["quests"]["loc"]) then
+if isempty(pfDB["quests"]["loc"] or pfDB["quests"]["enUS"]) then
   CreateFrame("Frame"):SetScript("OnUpdate", function()
     if GetTime() < 3 then return end
     DEFAULT_CHAT_FRAME:AddMessage("|cffff5555 !! |cffffaaaaWrong version of |cff33ffccpf|cffffffffQuest|cffffaaaa detected.|cffff5555 !!")
