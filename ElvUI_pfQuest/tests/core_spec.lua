@@ -296,6 +296,41 @@ check("other /db commands pass through", world.__originalSlash == "tracker", wor
 world.SlashCmdList.PFRESKIN("")
 check("/pfq opens the panel", world.__openedOptions == "pfQuest")
 
+-- /pfq status must report from the pack manifest, never by reading a table: a
+-- status command that materialises the database causes the cost it reports
+world.pfDB_PACKED_MANIFEST = {
+  version = 2,
+  tables = {
+    quests = { rows = 13974, subRows = { ["data"] = 4433, ["data-epoch"] = 2718, ["enUS"] = 4433 } },
+    units = { rows = 0, subRows = { ["data"] = 12738, ["enUS"] = 10385 } },
+    objects = { rows = 0, subRows = { ["data"] = 9873, ["enUS"] = 8944 } },
+    items = { rows = 0, subRows = { ["data"] = 23651, ["enUS"] = 17712 } },
+  },
+}
+world.pfDB = world.pfDB or {}
+world.pfDB.IsLoaded = function(kind) return kind == "quests" end
+world.pfDB.Status = function() return "items 0/2" end
+local printed = {}
+local realPrint = world.print
+world.print = function(line) printed[#printed + 1] = tostring(line) end
+world.SlashCmdList.PFRESKIN("status")
+world.print = realPrint
+
+check("/pfq status prints a database line", (function()
+  for _, line in ipairs(printed) do if line:find("database: quests") then return true end end
+  return false
+end)())
+check("/pfq status says which tables are built", (function()
+  for _, line in ipairs(printed) do
+    if line:find("database: quests") and line:find("built") then return true end
+  end
+  return false
+end)())
+check("/pfq status reports the loader state", (function()
+  for _, line in ipairs(printed) do if line:find("packed: items 0/2") then return true end end
+  return false
+end)())
+
 -- =====================================================================
 print(string.format("\n%d checks, %d failures", checks, failures))
 os.exit(failures == 0 and 0 or 1)

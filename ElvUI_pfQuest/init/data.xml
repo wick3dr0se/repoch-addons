@@ -1,13 +1,24 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/">
-  <Include file="..\db\init.lua"/>
-  <Include file="..\db\items.lua"/>
-  <Include file="..\db\units.lua"/>
-  <Include file="..\db\objects.lua"/>
-  <Include file="..\db\refloot.lua"/>
-  <Include file="..\db\quests-itemreq.lua"/>
-  <Include file="..\db\quests.lua"/>
-  <Include file="..\db\zones.lua"/>
-  <Include file="..\db\minimap.lua"/>
-  <Include file="..\db\areatrigger.lua"/>
-  <Include file="..\db\meta.lua"/>
+  <!-- The database ships packed: each table is one string constant, so login
+       lexes instead of compiling, and a table is built when something reads it.
+       Sources stay in db/*.lua; db/packed/decode.lua turns field-packed values
+       back into tables, db/packed/loader.lua materialises on demand. -->
+  <Include file="..\db\packed\manifest.lua"/>
+  <Include file="..\db\packed\areatrigger.lua"/>
+  <Include file="..\db\packed\items.lua"/>
+  <Include file="..\db\packed\meta.lua"/>
+  <Include file="..\db\packed\meta-epoch.lua"/>
+  <Include file="..\db\packed\meta-tbc.lua"/>
+  <Include file="..\db\packed\minimap.lua"/>
+  <Include file="..\db\packed\minimap-epoch.lua"/>
+  <Include file="..\db\packed\minimap-tbc.lua"/>
+  <Include file="..\db\packed\objects.lua"/>
+  <Include file="..\db\packed\professions.lua"/>
+  <Include file="..\db\packed\quests.lua"/>
+  <Include file="..\db\packed\quests-itemreq.lua"/>
+  <Include file="..\db\packed\refloot.lua"/>
+  <Include file="..\db\packed\units.lua"/>
+  <Include file="..\db\packed\zones.lua"/>
+  <Include file="..\db\packed\decode.lua"/>
+  <Include file="..\db\packed\loader.lua"/>
 </Ui>

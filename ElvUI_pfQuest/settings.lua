@@ -119,22 +119,45 @@ SlashCmdList["PFRESKIN"] = function(input)
       return n
     end
 
+    -- The database ships packed and builds on demand, so reporting must never
+    -- touch a table: reading pfDB.items.data here would materialise it and the
+    -- status command would quietly cause the cost it exists to report. Counts come
+    -- from the pack manifest, and "built" comes from the loader's own bookkeeping.
     if pfDB then
-      print(string.format("database: quests %d, units %d, objects %d, items %d",
-        count(pfDB.quests and pfDB.quests.loc), count(pfDB.units and pfDB.units.loc),
-        count(pfDB.objects and pfDB.objects.loc), count(pfDB.items and pfDB.items.loc)))
+      local manifest = pfDB_PACKED_MANIFEST
+
+      for _, entry in ipairs({ { "quests", "quests" }, { "units", "units" },
+                               { "objects", "objects" }, { "items", "items" } }) do
+        local kind = entry[1]
+        local man = manifest and manifest.tables and manifest.tables[kind]
+        local subRows = man and man.subRows or {}
+
+        local names = (subRows["enUS"] or 0) + (subRows["enUS-epoch"] or 0)
+        local rows = (subRows["data"] or 0) + (subRows["data-epoch"] or 0)
+        if rows == 0 then rows = subRows["data"] or 0 end
+
+        print(string.format("database: %-8s %6d names %6d rows   %s",
+          kind, names, rows,
+          pfDB.IsLoaded and pfDB.IsLoaded(kind) and "built" or "packed"))
+      end
+
+      if pfDB.Status then
+        print("packed: " .. pfDB.Status())
+      end
     end
 
     if pfBrowser and pfBrowser.tabs then
       local tab = pfBrowser.tabs[pfBrowser.active or "quests"]
-      local rows = 0
+      local shown = 0
       for _, row in ipairs(tab and tab.buttons or {}) do
-        if row.id then rows = rows + 1 end
+        if row.id then shown = shown + 1 end
       end
-      print(string.format("browser: %s tab, %d rows, list %sx%s",
-        tostring(pfBrowser.active), rows,
-        tostring(tab and tab.list and tab.list:GetWidth()),
-        tostring(tab and tab.list and tab.list:GetHeight())))
+      print(string.format("browser: %s tab, %d shown, window %s-%s of %d, readout %s",
+        tostring(pfBrowser.active), shown,
+        tostring((tab and tab.offset or 0) + 1),
+        tostring(math.min((tab and tab.offset or 0) + 15, #(tab and tab.data or {}))),
+        #(tab and tab.data or {}),
+        tostring(pfBrowser.count and pfBrowser.count:GetText())))
     end
   else
     pfq.OpenOptions()
