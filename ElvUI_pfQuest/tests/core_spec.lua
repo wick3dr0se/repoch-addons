@@ -296,6 +296,26 @@ check("other /db commands pass through", world.__originalSlash == "tracker", wor
 world.SlashCmdList.PFRESKIN("")
 check("/pfq opens the panel", world.__openedOptions == "pfQuest")
 
+-- the minimap icon's right-click menu was the last door onto the retired config
+-- window: it toggled a 1x1 hidden frame, so "Settings" did nothing at all
+local menuFile = (arg and arg[0] or ""):match("^(.*)/tests/[^/]+$") or "."
+local menuText = io.open(menuFile .. "/menu.lua", "rb")
+check("menu.lua is readable", menuText ~= nil)
+if menuText then
+	local source = menuText:read("*a")
+	menuText:close()
+
+	local settingsLine
+	for line in source:gmatch("[^\n]+") do
+		if line:find('"settings"', 1, true) then settingsLine = line end
+	end
+	check("the minimap menu has a settings entry", settingsLine ~= nil)
+	check("it opens the ElvUI panel", settingsLine and settingsLine:find("pfq.OpenOptions", 1, true) ~= nil,
+		settingsLine)
+	check("it no longer toggles the retired window",
+		settingsLine and settingsLine:find("pfQuestConfig", 1, true) == nil, settingsLine)
+end
+
 -- /pfq status must report from the pack manifest, never by reading a table: a
 -- status command that materialises the database causes the cost it reports
 world.pfDB_PACKED_MANIFEST = {

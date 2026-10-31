@@ -207,7 +207,8 @@ do -- tracking menu
     {"-"},
     {"journal", pfQuest_Loc["Quest Journal"], function(list, state) ToggleFrame(pfJournal) end},
     {"welcome", pfQuest_Loc["Welcome Screen"], function(list, state) ToggleFrame(pfQuestInit) end},
-    {"settings", pfQuest_Loc["Settings"], function(list, state) ToggleFrame(pfQuestConfig) end }
+    -- settings live in the ElvUI panel now; toggling the retired window did nothing
+    {"settings", pfQuest_Loc["Settings"], function(list, state) pfq.OpenOptions() end }
   }
 
   pfQuestMenu = CreateMenu(menu, "pfQuestMenu")
