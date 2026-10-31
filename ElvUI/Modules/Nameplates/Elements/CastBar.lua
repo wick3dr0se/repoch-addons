@@ -129,6 +129,13 @@ function NP:Update_CastBar(frame, event, unit)
 			return
 		end
 
+		-- a name without timings happens when a cast ends mid-query
+		if not startTime or not endTime then
+			resetAttributes(castBar)
+			castBar:Hide()
+			return
+		end
+
 		endTime = endTime / 1000
 		startTime = startTime / 1000
 
@@ -190,12 +197,17 @@ function NP:Update_CastBar(frame, event, unit)
 			endTime = endTime / 1000
 			startTime = startTime / 1000
 
+			-- A delayed/update event can arrive for a bar that never saw its
+			-- start: plates are recycled, and a stop or failed event resets the
+			-- bar while the plate stays shown. Arithmetic on a nil start time
+			-- threw out of the nameplate update, so treat it as a fresh update
+			-- instead of dividing by a state that does not exist.
 			local delta
 			if castBar.casting then
-				delta = startTime - castBar.startTime
+				delta = castBar.startTime and (startTime - castBar.startTime) or 0
 				castBar.value = GetTime() - startTime
 			else
-				delta = castBar.startTime - startTime
+				delta = castBar.startTime and (castBar.startTime - startTime) or 0
 				castBar.value = endTime - GetTime()
 			end
 
@@ -206,7 +218,7 @@ function NP:Update_CastBar(frame, event, unit)
 			castBar.Name:SetText(name)
 			castBar.max = endTime - startTime
 			castBar.startTime = startTime
-			castBar.delay = castBar.delay + delta
+			castBar.delay = (castBar.delay or 0) + delta
 			castBar:SetMinMaxValues(0, castBar.max)
 			castBar:SetValue(castBar.value)
 		end
